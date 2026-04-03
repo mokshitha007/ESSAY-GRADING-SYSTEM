@@ -1,108 +1,35 @@
-from flask import Flask, render_template, request
-import pickle
-from textblob import TextBlob
+import streamlit as st
 import textstat
+import language_tool_python
 
-app = Flask(__name__)
+# Initialize language tool (no Java needed if using offline mode)
+tool = language_tool_python.LanguageTool('en-US')  # Optional: offline mode
 
-# Load trained model
-with open('essay_model.pkl', 'rb') as f:
-    model = pickle.load(f)
+st.title("Toughest AI Essay Grader")
 
+# --- User input ---
+essay = st.text_area("Paste your essay here:", height=300)
 
-def find_mistakes(text):
-    mistakes = []
+if st.button("Grade Essay"):
+    if not essay.strip():
+        st.warning("Please enter an essay first!")
+    else:
+        # --- Grade based on readability ---
+        flesch_score = textstat.flesch_reading_ease(essay)
+        grade_level = textstat.text_standard(essay, float_output=False)
 
-    words = text.split()
+        # --- Constructive feedback ---
+        matches = tool.check(essay)
+        feedback = [f"{m.ruleId}: {m.message}" for m in matches]
 
-    for word in words:
-        clean_word = word.strip(".,!?;:()[]{}\"'")
+        # --- Display results ---
+        st.subheader("📊 Grading Results")
+        st.write(f"**Flesch Reading Ease Score:** {flesch_score}")
+        st.write(f"**Estimated Grade Level:** {grade_level}")
 
-        # crude spelling check
-        corrected = str(TextBlob(clean_word).correct())
-
-        if clean_word.lower() != corrected.lower() and len(clean_word) > 3:
-            mistakes.append({
-                "error": clean_word,
-                "suggestion": corrected
-            })
-
-    # remove duplicate mistakes
-    unique = []
-    seen = set()
-
-    for m in mistakes:
-        key = (m["error"], m["suggestion"])
-        if key not in seen:
-            seen.add(key)
-            unique.append(m)
-
-    return unique[:10]
-
-
-@app.route('/', methods=['GET', 'POST'])
-def home():
-    result = None
-
-    if request.method == 'POST':
-        essay = request.form['essay']
-
-        # AI predicted score
-        predicted_score = int(model.predict([essay])[0])
-        predicted_score = max(0, min(predicted_score, 100))
-
-        feedback = []
-
-        word_count = len(essay.split())
-
-        if word_count < 150:
-            predicted_score -= 10
-            feedback.append("Essay is too short. A strong answer should have at least 150 words.")
-
-        readability = textstat.flesch_reading_ease(essay)
-
-        if readability < 40:
-            predicted_score -= 5
-            feedback.append("Essay is difficult to read. Use shorter and clearer sentences.")
-
-        paragraphs = [p for p in essay.split('\n') if p.strip()]
-
-        if len(paragraphs) < 3:
-            predicted_score -= 10
-            feedback.append("Essay should contain introduction, body, and conclusion paragraphs.")
-
-        mistakes = find_mistakes(essay)
-
-        if len(mistakes) > 0:
-            feedback.append(f"Detected {len(mistakes)} possible spelling mistakes.")
-
-        predicted_score = max(0, min(predicted_score, 100))
-
-        # Grade mapping
-        if predicted_score >= 90:
-            grade = "A+"
-        elif predicted_score >= 80:
-            grade = "A"
-        elif predicted_score >= 70:
-            grade = "B"
-        elif predicted_score >= 60:
-            grade = "C"
-        elif predicted_score >= 50:
-            grade = "D"
+        st.subheader("📝 Constructive Feedback")
+        if feedback:
+            for i, f in enumerate(feedback, 1):
+                st.write(f"{i}. {f}")
         else:
-            grade = "F"
-
-        result = {
-            "score": predicted_score,
-            "grade": grade,
-            "feedback": feedback,
-            "mistakes": mistakes,
-            "word_count": word_count,
-            "readability": round(readability, 2)
-        }
-
-    return render_template('index.html', result=result)
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
+            st.write("No issues detected — excellent work!")
